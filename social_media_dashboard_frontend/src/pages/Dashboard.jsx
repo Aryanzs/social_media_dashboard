@@ -1,77 +1,103 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
-import TopBar from "../components/TopBar";
+import TopBar               from "../components/TopBar";
 import YouTubeConnectButton from "../components/YouTubeConnectButton";
-import YouTubeStats from "../components/YouTubeStats";
-import YouTubeChart from "../components/YouTubeTotalsChart";   // 🆕 Chart component
+import YouTubeStats         from "../components/YouTubeStats";
+import YouTubeTotalsChart   from "../components/YouTubeTotalsChart";
 
 const Dashboard = () => {
-  const [user, setUser]               = useState(null);
-  const [youtubeConnected, setYouCnx] = useState(false);
-  const [showChart, setShowChart]     = useState(false);  // 🆕 toggle state
+  const [user,       setUser]       = useState(null);
+  const [connected,  setConnected]  = useState(false);
+  const [showChart,  setShowChart]  = useState(false);
+  const [loading,    setLoading]    = useState(true);
 
-  /* ── fetch current user ── */
+  /* ── load current user on mount ── */
   useEffect(() => {
-    axios
-      .get("http://localhost:5000/api/auth/me", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-      .then(({ data }) => {
+    (async () => {
+      try {
+        const { data } = await axios.get("http://localhost:5000/api/auth/me", {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        });
         setUser(data.user);
-        const isYT = !!data.user?.socialTokens?.youtube?.access_token;
-        setYouCnx(isYT);
-        if (!isYT) setShowChart(false);                   // hide chart if not connected
-      })
-      .catch(() => window.location.replace("/login"));
+        const isYT = !!data.user.socialTokens?.youtube?.access_token;
+        setConnected(isYT);
+        setShowChart(isYT);          // auto-open chart if already linked
+      } catch {
+        window.location.replace("/login");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
+  /* ── callbacks to bubble down into children ── */
+  const handleConnect    = () => { setConnected(true);  setShowChart(true);  };
+  const handleDisconnect = useCallback(() => {
+    setConnected(false);
+    setShowChart(false);
+  }, []);
+
+  /* ── global spinner ── */
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-100">
+        <div className="w-16 h-16 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-gray-100">
       <TopBar />
 
-      <section className="p-8">
-        {user ? (
+      <main className="p-8 space-y-8">
+        {/* ── Greeting + connect button ── */}
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between bg-white shadow rounded-lg p-6">
+          <h1 className="text-2xl font-semibold text-gray-800">
+            Hello, <span className="text-teal-600">{user.name}</span> 👋
+          </h1>
+          <YouTubeConnectButton onConnect={handleConnect} />
+        </header>
+
+        {connected ? (
           <>
-            <h2 className="text-2xl font-semibold">
-              Hello, <span className="text-teal-600">{user.name}</span> 👋
-            </h2>
-
-            {/* ── Connect YouTube ── */}
-            <YouTubeConnectButton
-              onConnect={() => {
-                setYouCnx(true);
-                setShowChart(true);      // auto-show chart right after connect
-              }}
-            />
-
             {/* ── Stats ── */}
-            {youtubeConnected ? (
-              <>
-                <YouTubeStats connected={youtubeConnected} />
+            <section className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-medium text-gray-700 mb-4">YouTube Overview</h2>
+              <YouTubeStats
+                connected={connected}
+                onDisconnectYouTube={handleDisconnect}   /* expires → reset */
+              />
+            </section>
 
-                {/* Chart toggle button */}
-                <div className="text-center mt-6">
-                  <button
-                    onClick={() => setShowChart((v) => !v)}
-                    className="px-4 py-2 text-sm rounded-md border border-teal-600 text-teal-600 hover:bg-teal-50 transition"
-                  >
-                    {showChart ? "Hide YouTube Chart" : "Show YouTube Chart"}
-                  </button>
+            {/* ── Totals chart ── */}
+            <section className="bg-white shadow rounded-lg p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-medium text-gray-700">Totals Chart</h2>
+                <button
+                  onClick={() => setShowChart((v) => !v)}
+                  className="text-sm text-teal-600 hover:underline"
+                >
+                  {showChart ? "Hide Chart" : "Show Chart"}
+                </button>
+              </div>
+
+              {showChart ? (
+                <YouTubeTotalsChart connected={connected} />
+              ) : (
+                <div className="flex items-center justify-center h-40 text-gray-400">
+                  Click “Show Chart” to view analytics
                 </div>
-
-                {/* Conditionally render chart */}
-                {showChart && <YouTubeChart connected={youtubeConnected} />}
-              </>
-            ) : (
-              <p className="mt-6 text-sm text-gray-500 text-center">
-                Connect your YouTube account to view analytics.
-              </p>
-            )}
+              )}
+            </section>
           </>
         ) : (
-          <p className="text-center text-gray-600 mt-10">Loading…</p>
+          /* ── prompt to connect ── */
+          <section className="bg-white shadow rounded-lg p-6 text-center text-gray-500">
+            Connect your YouTube account to start seeing analytics here.
+          </section>
         )}
-      </section>
+      </main>
     </div>
   );
 };

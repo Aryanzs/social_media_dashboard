@@ -1,9 +1,8 @@
+// controllers/youtubeController.js
 import { google } from "googleapis";
 import User from "../models/User.js";
 
-/** -----------------------------------------------------------
- *  1. Helper: build OAuth2 client
- * ---------------------------------------------------------- */
+/* ───────── helper ───────── */
 const buildOAuthClient = ({ access_token, refresh_token, expiry_date } = {}) => {
   const client = new google.auth.OAuth2(
     process.env.YOUTUBE_CLIENT_ID,
@@ -16,27 +15,34 @@ const buildOAuthClient = ({ access_token, refresh_token, expiry_date } = {}) => 
   return client;
 };
 
-/** -----------------------------------------------------------
- *  2. GET /auth-url  – send Google OAuth URL to frontend
- * ---------------------------------------------------------- */
-export const getYouTubeAuthUrl = (_req, res) => {
+/* ────────────────────────────────────────────────
+ * 1) GET /api/youtube/auth-url
+ *    Return Google OAuth URL
+ * ────────────────────────────────────────────────*/
+export const getYouTubeAuthUrl = async (req, res) => {
   try {
+    const user = await User.findById(req.user.id);
+    const alreadyHasRT = !!user?.socialTokens?.youtube?.refresh_token;
+
     const oauth2Client = buildOAuthClient();
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
-      prompt: "consent",
+      prompt: alreadyHasRT ? "select_account" : "consent",
       scope: ["https://www.googleapis.com/auth/youtube.readonly"],
     });
-    res.json({ url });
-  } catch (error) {
-    console.error("❌ Auth-URL error:", error);
-    res.status(500).json({ msg: "Failed to create auth URL", error: error.message });
+    return res.json({ url });
+  } catch (err) {
+    console.error("❌ getYouTubeAuthUrl error:", err);
+    return res
+      .status(500)
+      .json({ msg: "Failed to generate auth URL", error: err.message });
   }
 };
 
-/** -----------------------------------------------------------
- *  3. POST /callback  – exchange code & store tokens
- * ---------------------------------------------------------- */
+/* ────────────────────────────────────────────────
+ * 2) POST /api/youtube/callback
+ *    Exchange code → tokens and save
+ * ────────────────────────────────────────────────*/
 export const handleYouTubeCallback = async (req, res) => {
   const { code } = req.body;
   const userId   = req.user?.id;
@@ -46,52 +52,61 @@ export const handleYouTubeCallback = async (req, res) => {
 
   try {
     const oauth2Client = buildOAuthClient();
-    const { tokens }   = await oauth2Client.getToken({ code, redirect_uri: process.env.YOUTUBE_REDIRECT_URI });
+    const { tokens }   = await oauth2Client.getToken(code); // redirect_uri already in client
 
-    // Save tokens to DB
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ msg: "User not found" });
 
     user.socialTokens.youtube = {
       access_token:  tokens.access_token,
-      refresh_token: tokens.refresh_token,
+      refresh_token: tokens.refresh_token || user.socialTokens.youtube?.refresh_token,
       expiry_date:   tokens.expiry_date,
     };
     await user.save();
 
-    res.json({ msg: "✅ YouTube connected" });
+    return res.json({ msg: "✅ YouTube connected successfully" });
   } catch (err) {
-    console.error("❌ Callback error:", err);
-    res.status(500).json({ msg: "YouTube connection failed", error: err.message });
+    console.error("❌ handleYouTubeCallback error:", err);
+    return res
+      .status(500)
+      .json({ msg: "YouTube connection failed", error: err.message });
   }
 };
 
-/** -----------------------------------------------------------
- *  4. GET /analytics  – return channel stats
- * ---------------------------------------------------------- */
-export const fetchYouTubeAnalytics = async (req, res) => {
-  const userId = req.user?.id;
+/* ────────────────────────────────────────────────
+ * Shared helper: ensure valid tokens or 401
+ * ────────────────────────────────────────────────*/
+const getFreshYouTubeClient = async (user) => {
+  const ytTok = user.socialTokens.youtube || {};
+  if (!ytTok.access_token) throw new Error("NOT_CONNECTED");
 
-  try {
-    const user = await User.findById(userId);
-    const ytTok = user?.socialTokens?.youtube;
+  const oauth2 = buildOAuthClient(ytTok);
 
-    if (!ytTok?.access_token)
-      return res.status(400).json({ msg: "YouTube not connected" });
-
-    // Build client with stored creds
-    const oauth2Client = buildOAuthClient(ytTok);
-
-    /* ----- auto-refresh if needed ----- */
-    if (ytTok.expiry_date && ytTok.expiry_date < Date.now()) {
-      const { credentials } = await oauth2Client.refreshAccessToken();
+  if (ytTok.expiry_date && ytTok.expiry_date < Date.now()) {
+    if (!ytTok.refresh_token) throw new Error("NO_REFRESH_TOKEN");
+    try {
+      const { credentials } = await oauth2.refreshAccessToken();
       Object.assign(user.socialTokens.youtube, {
         access_token:  credentials.access_token,
         expiry_date:   credentials.expiry_date,
         refresh_token: credentials.refresh_token || ytTok.refresh_token,
       });
       await user.save();
+    } catch (err) {
+      console.error("❌ Token refresh failed:", err);
+      throw new Error("REFRESH_FAILED");
     }
+  }
+  return oauth2;
+};
+
+/* ────────────────────────────────────────────────
+ * 3) GET /api/youtube/analytics
+ * ────────────────────────────────────────────────*/
+export const fetchYouTubeAnalytics = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    const oauth2Client = await getFreshYouTubeClient(user);
 
     const youtube = google.youtube({ version: "v3", auth: oauth2Client });
     const { data } = await youtube.channels.list({
@@ -100,13 +115,13 @@ export const fetchYouTubeAnalytics = async (req, res) => {
     });
 
     if (!data.items?.length)
-      return res.status(404).json({ msg: "No channel data found" });
+      return res.status(404).json({ msg: "No YouTube channel data found" });
 
-    const ch     = data.items[0];
-    const stats  = ch.statistics;
-    const info   = ch.snippet;
+    const ch    = data.items[0];
+    const stats = ch.statistics;
+    const info  = ch.snippet;
 
-    res.json({
+    return res.json({
       channelTitle: info.title,
       channelId:    ch.id,
       subscribers:  stats.subscriberCount,
@@ -114,28 +129,43 @@ export const fetchYouTubeAnalytics = async (req, res) => {
       videoCount:   stats.videoCount,
     });
   } catch (err) {
-    console.error("❌ Analytics error:", err);
-    res.status(500).json({ msg: "Failed to fetch analytics", error: err.message });
+    if (["NOT_CONNECTED", "NO_REFRESH_TOKEN", "REFRESH_FAILED"].includes(err.message)) {
+      const user = await User.findById(req.user.id);
+      user.socialTokens.youtube = {};
+      await user.save();
+      return res.status(401).json({ msg: "Session expired. Please reconnect YouTube." });
+    }
+    console.error("❌ fetchYouTubeAnalytics error:", err);
+    return res.status(500).json({ msg: "Failed to fetch analytics", error: err.message });
   }
 };
 
-// GET /analytics/timeline?range=30
+/* ────────────────────────────────────────────────
+ * 4) GET /api/youtube/analytics/timeline?range=30
+ *     (stubbed demo data)
+ * ────────────────────────────────────────────────*/
 export const fetchYouTubeTimeline = async (req, res) => {
-    const range = Number(req.query.range || 30);
-    const user  = await User.findById(req.user.id);
-    const ytTok = user?.socialTokens?.youtube;
-  
-    if (!ytTok?.access_token)
-      return res.status(400).json({ msg: "YouTube not connected" });
-  
-    /** For demo we generate mock numbers.
-     *  In production call YouTube Analytics API */
+  const range = Number(req.query.range || 30);
+  try {
+    const user = await User.findById(req.user.id);
+    await getFreshYouTubeClient(user);            // validates / refreshes
+
+    // TODO: Replace stub with YouTube Analytics API call
     const today = new Date();
     const data  = Array.from({ length: range }).map((_, i) => {
       const d = new Date(today);
       d.setDate(d.getDate() - (range - 1 - i));
       return { date: d.toISOString().slice(0, 10), views: 500 + i * 12 };
     });
-    res.json(data);
-  };
-  
+    return res.json(data);
+  } catch (err) {
+    if (["NOT_CONNECTED", "NO_REFRESH_TOKEN", "REFRESH_FAILED"].includes(err.message)) {
+      const user = await User.findById(req.user.id);
+      user.socialTokens.youtube = {};
+      await user.save();
+      return res.status(401).json({ msg: "Session expired. Please reconnect YouTube." });
+    }
+    console.error("❌ fetchYouTubeTimeline error:", err);
+    return res.status(500).json({ msg: "Failed to fetch timeline", error: err.message });
+  }
+};
