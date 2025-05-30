@@ -1,3 +1,4 @@
+// src/components/YouTubeTotalsChart.jsx
 import { useState, useMemo } from "react";
 import {
   BarChart, Bar,
@@ -5,6 +6,7 @@ import {
   RadialBarChart, RadialBar,
   XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
+import useYouTubeTotals from "../hooks/useYouTubeTotals";
 
 const COLORS = ["#14b8a6", "#6366f1", "#f97316"];
 const TYPES  = [
@@ -14,15 +16,24 @@ const TYPES  = [
 ];
 
 /**
- * Quick snapshot chart (views / subs / videos).
- * Renders only after a valid `totals` object is supplied.
- *
- * @param {{ totals: { views:number, subscribers:number, videoCount:number } }} props
+ * Props
+ * -----
+ * connected          : boolean – true after OAuth
+ * onDisconnectYouTube: () => void – fires when token refresh fails
  */
-const YouTubeTotalsChart = ({ totals }) => {
+export default function YouTubeTotalsChart({
+  connected,
+  onDisconnectYouTube,
+}) {
+  // 1) fetch totals via hook
+  const { totals, loading, error } = useYouTubeTotals(connected, {
+    onExpired: onDisconnectYouTube,
+  });
+
+  // 2) chart‐type state
   const [type, setType] = useState("bar");
 
-  /* turn totals → recharts‐friendly data */
+  // 3) ALWAYS build data array (hook order preserved)
   const data = useMemo(() => {
     if (!totals) return [];
     const { views = 0, subscribers = 0, videoCount = 0 } = totals;
@@ -33,22 +44,26 @@ const YouTubeTotalsChart = ({ totals }) => {
     ];
   }, [totals]);
 
-  /* Guard: render nothing until numbers arrive */
+  // 4) early‐exit guards
+  if (!connected)                          return null;
+  if (loading)                             return <div className="mt-8 p-6 h-72 animate-pulse bg-white rounded-lg shadow-md" />;
+  if (error)                               return <div className="mt-8 text-red-500 text-center border border-red-200 bg-red-50 p-4 rounded-lg">❌ {error}</div>;
   if (!totals || data.every((d) => d.value === 0)) return null;
 
+  // 5) render chart
   return (
     <div className="mt-8 bg-white rounded-lg shadow-md p-6">
-      {/* header + chart selector */}
+      {/* header + selector */}
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-medium text-gray-700">Totals snapshot</h3>
+        <h3 className="text-lg font-medium text-gray-700">Totals Snapshot</h3>
         <select
           value={type}
           onChange={(e) => setType(e.target.value)}
           className="border border-gray-300 rounded px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
         >
-          {TYPES.map((t) => (
-            <option key={t.key} value={t.key}>
-              {t.label}
+          {TYPES.map(({ key, label }) => (
+            <option key={key} value={key}>
+              {label}
             </option>
           ))}
         </select>
@@ -107,6 +122,4 @@ const YouTubeTotalsChart = ({ totals }) => {
       </ResponsiveContainer>
     </div>
   );
-};
-
-export default YouTubeTotalsChart;
+}
