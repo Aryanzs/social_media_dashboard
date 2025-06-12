@@ -3,6 +3,7 @@ import express from "express";
 import dotenv from "dotenv";
 import connectDB from "./config/db.js";
 import authRoutes from "./routes/authRoutes.js";
+import analysisRoutes from "./routes/analysisRoutes.js";
 import cors from "cors";
 
 
@@ -30,6 +31,8 @@ app.get("/", (req, res) => {
 
 import youtubeRoutes from "./routes/youtubeRoutes.js";
 app.use("/api/youtube", youtubeRoutes);
+
+app.use("/api/comments", analysisRoutes);
 
 
 app.listen(PORT, () => {

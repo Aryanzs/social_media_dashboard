@@ -3,16 +3,18 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 
-import TopBar               from "../components/TopBar";
+import TopBar from "../components/TopBar";
 import YouTubeConnectButton from "../components/YouTubeConnectButton";
-import YouTubeStats         from "../components/YouTubeStats";
-import YouTubeTotalsChart   from "../components/YouTubeTotalsChart";
+import YouTubeStats from "../components/YouTubeStats";
+import YouTubeTotalsChart from "../components/YouTubeTotalsChart";
+import CommentAnalyzer from "../components/CommentAnalyzer";
+
 
 const Dashboard = () => {
-  const [user,      setUser]      = useState(null);
+  const [user, setUser] = useState(null);
   const [connected, setConnected] = useState(false);
   const [showChart, setShowChart] = useState(false);
-  const [loading,   setLoading]   = useState(true);
+  const [loading, setLoading] = useState(true);
 
   /* ── 1. load current user once ── */
   useEffect(() => {
@@ -105,6 +107,13 @@ const Dashboard = () => {
                   Click “Show Chart” to view analytics
                 </div>
               )}
+            </section>
+            {/* Comment Analyzer with n8n form */}
+            <section className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-medium text-gray-700 mb-4">
+                Analyze YouTube Comments
+              </h2>
+              <CommentAnalyzer />
             </section>
           </>
         ) : (
